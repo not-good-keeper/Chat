@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Edit Profile</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+</head>
+<body>
+    <div class="container mt-5">
+        <h2>Edit Profile</h2>
+        <form id="editProfileForm">
+            <div class="mb-3">
+                <label for="displayName" class="form-label">Display Name</label>
+                <input type="text" class="form-control" id="displayName" required>
+            </div>
+            <div class="mb-3">
+                <label for="fullName" class="form-label">Full Name</label>
+                <input type="text" class="form-control" id="fullName" required>
+            </div>
+            <div class="mb-3">
+                <label for="profilePicture" class="form-label">Profile Picture</label>
+                <input type="file" class="form-control" id="profilePicture" accept="image/*">
+            </div>
+            <div class="mb-3">
+                <label for="newPassword" class="form-label">New Password</label>
+                <input type="password" class="form-control" id="newPassword">
+            </div>
+            <button type="submit" class="btn btn-primary">Update</button>
+            <button type="button" id="deleteAccountBtn" class="btn btn-danger">Delete Account</button>
+            <button type="button" id="changePasswordBtn" class="btn btn-warning">Change Password</button>
+            <a href="home.html" class="btn btn-secondary">Cancel</a>
+        </form>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+        import { getAuth, onAuthStateChanged, deleteUser, updatePassword } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-auth.js";
+        import { getDatabase, ref, set, remove, onValue, update, get } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-database.js";
+        import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObject, listAll, list } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-storage.js";
+    
+        const firebaseConfig = {
+            apiKey: "AIzaSyB6U1J7tGtITNPDlk9HuMlhhhqLKJ-ttsk",
+            authDomain: "uidchat.firebaseapp.com",
+            databaseURL: "https://uidchat-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "uidchat",
+            storageBucket: "uidchat.appspot.com",
+            messagingSenderId: "283559039789",
+            appId: "1:283559039789:web:c68696743f039b199639a4"
+        };
+    
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getDatabase();
+        const storage = getStorage(app);
+    
+        const editProfileForm = document.getElementById('editProfileForm');
+        const displayName = document.getElementById('displayName');
+        const fullName = document.getElementById('fullName');
+        const profilePictureInput = document.getElementById('profilePicture');
+        const newPassword = document.getElementById('newPassword');
+        const deleteAccountBtn = document.getElementById('deleteAccountBtn');
+        const changePasswordBtn = document.getElementById('changePasswordBtn');
+    
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                const userRef = ref(db, 'UsersAuthList/' + user.uid);
+    
+                // Populate current profile data
+                onValue(userRef, (snapshot) => {
+                    const userData = snapshot.val();
+                    if (userData) {
+                        displayName.value = userData.displayname;
+                        fullName.value = userData.name;
+                    }
+                });
+    
+                // Update profile
+                editProfileForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+    
+                    try {
+                        let updates = {
+                            displayname: displayName.value,
+                            name: fullName.value
+                        };
+    
+                        // Upload new profile picture
+                        if (profilePictureInput.files[0]) {
+                            const storageRefUser = storageRef(storage, 'pfp/' + user.uid + '/' + profilePictureInput.files[0].name);
+                            await uploadBytes(storageRefUser, profilePictureInput.files[0]);
+    
+                            // Get download URL for the uploaded profile picture
+                            const profilePicUrl = await getDownloadURL(storageRefUser);
+    
+                            // Delete old profile picture from storage if exists
+                            const oldProfilePicRef = storageRef(storage, 'pfp/' + user.uid + '/' + userData.displayname);
+                            await deleteObject(oldProfilePicRef).catch(() => {});
+    
+                            updates.profilePicture = profilePicUrl;
+                        }
+    
+                        // Update user data
+                        await update(userRef, updates);
+    
+                        alert('Profile updated successfully!');
+                        window.location.href = 'home.html';
+                    } catch (error) {
+                        console.error('Error updating profile:', error);
+                        alert('An error occurred while updating the profile. Please try again.');
+                    }
+                });
+    
+                // Delete account
+                // Delete account
+deleteAccountBtn.addEventListener('click', async () => {
+    try {
+        const user = auth.currentUser;
+        const userId = user.uid;
+
+        // Delete profile picture from storage
+        const listRef = storageRef(storage, 'pfp/' + userId);
+        const listResult = await listAll(listRef);
+        listResult.items.forEach(async (item) => {
+            await deleteObject(item);
+        });
+
+        // Delete user data from UsersAuthList
+        const userRef = ref(db, 'UsersAuthList/' + userId);
+        await remove(userRef);
+
+        // Delete user data from Chats and remove DMs from other users
+        const chatsRef = ref(db, 'Chats');
+        onValue(chatsRef, async (snapshot) => {
+            const chats = snapshot.val();
+            if (chats) {
+                Object.keys(chats).forEach(async (chatKey) => {
+                    if (chatKey.includes(userId)) {
+                        await remove(ref(db, 'Chats/' + chatKey));
+                        const otherUserId = chatKey.replace(userId, '').replace('_', '');
+                        const otherUserChatRef = ref(db, 'UsersAuthList/' + otherUserId + '/chats/' + chatKey);
+                        await remove(otherUserChatRef);
+                    }
+                });
+            }
+        });
+
+        // Delete user from GroupChats and update other users' chat lists
+        const groupChatsRef = ref(db, 'UsersAuthList/' + userId + '/groupchats');
+        onValue(groupChatsRef, async (snapshot) => {
+            const groupChats = snapshot.val();
+            if (groupChats) {
+                const groupChatIds = Object.keys(groupChats);
+                for (const chatId of groupChatIds) {
+                    const groupChatMembersRef = ref(db, `GroupChats/${chatId}/members`);
+                    onValue(groupChatMembersRef, async (snapshot) => {
+                        const groupChatMembers = snapshot.val();
+                        if (groupChatMembers) {
+                            // Find and remove the user ID from the members object
+                            const index = Object.values(groupChatMembers).indexOf(userId);
+                            if (index > -1) {
+                                const keys = Object.keys(groupChatMembers);
+                                delete groupChatMembers[keys[index]];
+                            }
+
+                            await set(ref(db, `GroupChats/${chatId}/members`), groupChatMembers);
+
+                            // Check if the user is the last member of the group chat and delete the chat if so
+                            if (Object.keys(groupChatMembers).length === 0) {
+                                await remove(ref(db, `GroupChats/${chatId}`));
+                            }
+                        }
+                    });
+                }
+            }
+        });
+
+        // Delete user from authentication
+        await deleteUser(user);
+
+        alert('Account deleted successfully!');
+        window.location.href = 'login.html';
+    } catch (error) {
+        console.error('Error deleting account:', error);
+        alert('An error occurred while deleting the account. Please try again.');
+    }
+});
+
+
+    
+                // Change Password
+                changePasswordBtn.addEventListener('click', async () => {
+                    try {
+                        await updatePassword(user, newPassword.value);
+                        alert('Password changed successfully!');
+                        newPassword.value = '';
+                    } catch (error) {
+                        console.error('Error changing password:', error);
+                        alert('An error occurred while changing the password. Please try again.');
+                    }
+                });
+            } else {
+                window.location.href = 'login.html';
+            }
+        });
+    </script>
+    
+</body>
+</html>

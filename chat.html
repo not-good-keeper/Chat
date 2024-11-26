@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Direct Message</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+</head>
+
+<body>
+    <div class="container mt-5">
+        <div class="row">
+            <div class="col-md-12">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <button id="backBtn" class="btn btn-secondary">Back</button>
+                    <h2>Direct Message</h2>
+                    <button id="leaveBtn" class="btn btn-danger">Close DM</button>
+                </div>
+                <div id="chatMessages" class="mb-4" style="max-height: 400px; overflow-y: auto;"></div>
+                <input type="text" id="messageInput" class="form-control mb-2" placeholder="Type your message...">
+                <button id="sendBtn" class="btn btn-primary me-2">Send</button>
+                <input type="file" id="imageFileInput" accept="image/*" class="mb-2">
+                <button id="sendImageBtn" class="btn btn-secondary">Send Image</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous">
+    </script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+        import { getAuth } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-auth.js";
+        import { getDatabase, ref, push, onChildAdded, onValue, set, query, orderByKey, limitToLast, endAt } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-database.js";
+        import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-storage.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyB6U1J7tGtITNPDlk9HuMlhhhqLKJ-ttsk",
+            authDomain: "uidchat.firebaseapp.com",
+            databaseURL: "https://uidchat-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "uidchat",
+            storageBucket: "uidchat.appspot.com",
+            messagingSenderId: "283559039789",
+            appId: "1:283559039789:web:c68696743f039b199639a4"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getDatabase();
+        const storage = getStorage(app);
+
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const imageFileInput = document.getElementById('imageFileInput');
+        const sendImageBtn = document.getElementById('sendImageBtn');
+        const leaveBtn = document.getElementById('leaveBtn');
+        const backBtn = document.getElementById('backBtn');
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const chatId = urlParams.get('chatId');
+        const [userId1, userId2] = chatId.split('_');
+
+        let messagesRef;
+        let oldestMessageKey = null;
+
+        async function initChat() {
+            messagesRef = ref(db, `Chats/${chatId}/messages`);
+
+            loadMessages(20);
+
+            sendBtn.addEventListener('click', sendMessage);
+            sendImageBtn.addEventListener('click', sendImage);
+            leaveBtn.addEventListener('click', leaveChat);
+            backBtn.addEventListener('click', goBack);
+
+            chatMessages.addEventListener('scroll', function () {
+                if (chatMessages.scrollTop === 0) {
+                    loadOlderMessages(20);
+                }
+            });
+
+            // Mark the chat as read
+            if (auth.currentUser) {
+                const userChatRef = ref(db, `UsersAuthList/${auth.currentUser.uid}/chats/${chatId}`);
+                onValue(userChatRef, (snapshot) => {
+                    if (snapshot.val() && snapshot.val().unread) {
+                        set(userChatRef, { unread: false });
+                    }
+                });
+            }
+        }
+
+        async function displayMessage(message) {
+            const sender = await fetchUser(message.sender);
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'mb-2';
+
+            messageDiv.innerHTML = `
+                <img src="${sender?.profilePicture || 'default-profile-picture.jpg'}" 
+                     class="rounded-circle border" 
+                     style="width: 40px; height: 40px; object-fit: cover; margin-right: 10px;" 
+                     alt="Profile Picture">
+                <strong>${sender?.displayname || 'Unknown User'}: </strong>
+                ${message.content ? message.content : ''}
+                ${message.image ? `<img src="${message.image}" style="max-width: 200px;" alt="Sent Image">` : ''}
+                <span class="text-muted float-end">${new Date(message.timestamp).toLocaleTimeString()}</span>
+            `;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            // Update last message in UsersAuthList
+            const lastMessage = {
+                content: message.content ? message.content : 'Sent an image',
+                timestamp: message.timestamp
+            };
+
+            updateLastMessage(userId1, userId2, lastMessage);
+        }
+
+        async function fetchUser(userId) {
+            return new Promise((resolve, reject) => {
+                const senderRef = ref(db, `UsersAuthList/${userId}`);
+                onValue(senderRef, (snapshot) => {
+                    const senderData = snapshot.val();
+                    resolve(senderData);
+                }, (error) => {
+                    reject(error);
+                });
+            });
+        }
+
+        function sendMessage() {
+            const messageContent = messageInput.value;
+            if (messageContent.trim() !== '') {
+                const message = {
+                    sender: auth.currentUser?.uid,
+                    content: messageContent,
+                    timestamp: Date.now()
+                };
+
+                push(messagesRef, message);
+
+                messageInput.value = '';
+            }
+        }
+
+        function sendImage() {
+            const file = imageFileInput.files[0];
+            if (file) {
+                const storageRefUser = storageRef(storage, `chatImages/${chatId}/${file.name}`);
+
+                uploadBytes(storageRefUser, file)
+                    .then(async (snapshot) => {
+                        const imageUrl = await getDownloadURL(snapshot.ref);
+                        const message = {
+                            sender: auth.currentUser?.uid,
+                            image: imageUrl,
+                            timestamp: Date.now()
+                        };
+
+                        push(messagesRef, message);
+
+                        imageFileInput.value = '';
+                    })
+                    .catch(error => {
+                        console.error('Error uploading image:', error);
+                        alert('An error occurred while sending the image. Please try again.');
+                    });
+            } else {
+                alert('Please select an image to upload.');
+            }
+        }
+
+        function leaveChat() {
+            if (auth.currentUser) {
+                // Remove chat from user's chat list
+                const userChatRef = ref(db, `UsersAuthList/${auth.currentUser.uid}/chats/${chatId}`);
+                set(userChatRef, null);
+
+                // Redirect to home page
+                window.location.href = 'home.html';
+            }
+        }
+
+        function goBack() {
+            window.history.back();
+        }
+
+        function loadMessages(limit) {
+            const queryRef = query(messagesRef, orderByKey(), limitToLast(limit));
+            onValue(queryRef, (snapshot) => {
+                chatMessages.innerHTML = ''; // Clear chat messages
+                snapshot.forEach((childSnapshot) => {
+                    const message = childSnapshot.val();
+                    displayMessage(message);
+                });
+            });
+        }
+
+        function loadOlderMessages(limit) {
+            const queryRef = query(messagesRef, orderByKey(), endAt(oldestMessageKey), limitToLast(limit + 1));
+            onValue(queryRef, (snapshot) => {
+                const messages = [];
+                snapshot.forEach((childSnapshot) => {
+                    const message = childSnapshot.val();
+                    messages.unshift(message); // Add messages to the beginning of the array
+                    oldestMessageKey = childSnapshot.key; // Update the oldest message key
+                });
+                messages.pop(); // Remove the last message as it's already displayed
+
+                messages.forEach(message => {
+                    displayMessage(message);
+                });
+            });
+        }
+        function updateLastMessage(userId1, userId2, message) {
+            const user1Ref = ref(db, `UsersAuthList/${userId1}/chats/${chatId}`);
+            set(user1Ref, { lastMessage: message });
+
+            const user2Ref = ref(db, `UsersAuthList/${userId2}/chats/${chatId}`);
+            set(user2Ref, { lastMessage: message });
+        }
+
+        initChat();
+    </script>
+</body>
+
+</html>

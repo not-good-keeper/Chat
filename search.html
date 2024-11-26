@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Search</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+</head>
+<body>
+    <div class="container mt-5">
+        <h2>Search Users</h2>
+        <div class="input-group mb-3">
+            <input type="text" id="searchInput" class="form-control" placeholder="Search for users...">
+            <button id="searchBtn" class="btn btn-primary">Search</button>
+            <a href="home.html" class="btn btn-secondary">Back</a>
+        </div>
+        <ul id="searchResults" class="list-group mb-3">
+            <!-- Search Results will be populated here -->
+        </ul>
+
+        <!-- Selected Users List -->
+        <div id="selectedUsersList" style="display: none;">
+            <h3>Selected Users</h3>
+            <ul id="selectedUsers" class="list-group">
+                <!-- Selected users will be populated here -->
+            </ul>
+            <div id="gcForm" style="display: none;">
+                <h3>Create Group Chat</h3>
+                <form id="createGCForm">
+                    <div class="mb-3">
+                        <label for="gcName" class="form-label">Group Chat Name:</label>
+                        <input type="text" class="form-control" id="gcName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="gcImage" class="form-label">Group Chat Profile Picture:</label>
+                        <input type="file" class="form-control" id="gcImage" accept="image/*" required>
+                    </div>
+                    <button type="submit" id="createGCButton" class="btn btn-primary" disabled>Create GC</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+        import { getAuth } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-auth.js";
+        import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-database.js";
+        import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-storage.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyB6U1J7tGtITNPDlk9HuMlhhhqLKJ-ttsk",
+            authDomain: "uidchat.firebaseapp.com",
+            databaseURL: "https://uidchat-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "uidchat",
+            storageBucket: "uidchat.appspot.com",
+            messagingSenderId: "283559039789",
+            appId: "1:283559039789:web:c68696743f039b199639a4"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getDatabase();
+        const storage = getStorage(app);
+
+        const searchInput = document.getElementById('searchInput');
+        const searchBtn = document.getElementById('searchBtn');
+        const searchResults = document.getElementById('searchResults');
+        const selectedUsersList = document.getElementById('selectedUsersList');
+        const selectedUsers = document.getElementById('selectedUsers');
+        const gcForm = document.getElementById('gcForm');
+        const createGCForm = document.getElementById('createGCForm');
+        const gcName = document.getElementById('gcName');
+        const gcImage = document.getElementById('gcImage');
+        const createGCButton = document.getElementById('createGCButton');
+
+        let selectedUsersArray = [];
+
+        searchBtn.addEventListener('click', () => {
+            const query = searchInput.value.trim().toLowerCase();
+            if (query) {
+                searchUsers(query);
+            }
+        });
+
+        searchInput.addEventListener('input', () => {
+            const query = searchInput.value.trim().toLowerCase();
+            if (query) {
+                searchUsers(query);
+            } else {
+                searchResults.innerHTML = '';
+            }
+        });
+
+        function searchUsers(query) {
+            const usersRef = ref(db, 'UsersAuthList');
+            onValue(usersRef, (snapshot) => {
+                const users = snapshot.val();
+                let results = [];
+                if (users) {
+                    for (let uid in users) {
+                        if (users[uid].displayname && users[uid].displayname.toLowerCase().includes(query) && uid !== auth.currentUser.uid) {
+                            results.push({
+                                uid: uid,
+                                displayname: users[uid].displayname,
+                                profilePicture: users[uid].profilePicture
+                            });
+                        }
+                    }
+                }
+                displaySearchResults(results);
+            });
+        }
+
+        function displaySearchResults(results) {
+            searchResults.innerHTML = '';
+            results.forEach(user => {
+                const listItem = document.createElement('li');
+                listItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+                
+                const userDisplay = document.createElement('span');
+                userDisplay.textContent = user.displayname;  // Displaying displayname instead of uid
+                
+                const btnGroup = document.createElement('div');
+                btnGroup.className = 'btn-group';
+                
+                const openDMBtn = document.createElement('button');
+                openDMBtn.className = 'btn btn-primary me-2';
+                openDMBtn.textContent = 'Open DM';
+                openDMBtn.addEventListener('click', () => openDM(user.uid));
+                
+                const selectUserBtn = document.createElement('button');
+                selectUserBtn.className = 'btn btn-success';
+                selectUserBtn.textContent = 'Select';
+                selectUserBtn.addEventListener('click', () => selectUser(user.uid));
+                
+                btnGroup.appendChild(openDMBtn);
+                btnGroup.appendChild(selectUserBtn);
+                
+                listItem.appendChild(userDisplay);
+                listItem.appendChild(btnGroup);
+                searchResults.appendChild(listItem);
+
+                if (user.profilePicture) {
+                    const storageRefUser = storageRef(storage, user.profilePicture);
+                    getDownloadURL(storageRefUser).then((url) => {
+                        const profilePicture = document.createElement('img');
+                        profilePicture.src = url;
+                        profilePicture.className = 'rounded-circle';
+                        profilePicture.style.width = '30px';
+                        profilePicture.style.height = '30px';
+                        profilePicture.style.objectFit = 'cover';
+                        profilePicture.alt = 'Profile Picture';
+                        listItem.insertBefore(profilePicture, userDisplay);
+                    }).catch((error) => {
+                        console.error("Error fetching profile picture:", error);
+                    });
+                }
+            });
+        }
+
+        function selectUser(uid) {
+            const usersRef = ref(db, 'UsersAuthList');
+            onValue(usersRef, (snapshot) => {
+                const users = snapshot.val();
+                if (users && users[uid]) {
+                    const displayName = users[uid].displayname;  // Get the displayname from the database
+                    if (!selectedUsersArray.includes(uid)) {
+                        selectedUsersArray.push(uid);
+                        const listItem = document.createElement('li');
+                        listItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+                        
+                        const userDisplay = document.createElement('span');
+                        userDisplay.textContent = displayName;  // Displaying displayname instead of uid
+                        
+                        const deselectUserBtn = document.createElement('button');
+                        deselectUserBtn.className = 'btn btn-danger';
+                        deselectUserBtn.textContent = 'Deselect';
+                        deselectUserBtn.addEventListener('click', () => deselectUser(uid));
+                        
+                        listItem.appendChild(userDisplay);
+                        listItem.appendChild(deselectUserBtn);
+                        selectedUsers.appendChild(listItem);
+
+                        if (selectedUsersArray.length >= 2) {
+                            createGCButton.disabled = false;
+                        }
+
+                        if (selectedUsersArray.length === 1) {
+                            selectedUsersList.style.display = 'block';
+                        } else {
+                            gcForm.style.display = 'block';
+                        }
+                    }
+                }
+            });
+        }
+
+        function deselectUser(uid) {
+            const index = selectedUsersArray.indexOf(uid);
+            if (index > -1) {
+                selectedUsersArray.splice(index, 1);
+            }
+            const listItem = selectedUsers.querySelector(`li:contains(${uid})`);
+            selectedUsers.removeChild(listItem);
+
+            if (selectedUsersArray.length >= 2) {
+                createGCButton.disabled = false;
+            } else {
+                createGCButton.disabled = true;
+            }
+
+            if (selectedUsersArray.length === 1) {
+                selectedUsersList.style.display = 'block';
+            } else if (selectedUsersArray.length === 0) {
+                selectedUsersList.style.display = 'none';
+                gcForm.style.display = 'none';
+            }
+        }
+
+        function openDM(uid) {
+            const chatId = [auth.currentUser.uid, uid].sort().join('_');
+            window.location.href = `chat.html?chatId=${chatId}`;
+        }
+
+        createGCForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+
+            const gcNameVal = gcName.value.trim();
+
+            if (selectedUsersArray.length >= 2) {
+                const gcMembers = [...selectedUsersArray, auth.currentUser.uid];
+                
+                // Upload the group chat profile picture to Firebase Storage
+                const file = gcImage.files[0];
+                if (file) {
+                    const storageRefUser = storageRef(storage, `groupChatImages/${file.name}`);
+                    uploadBytes(storageRefUser, file)
+                        .then(async (snapshot) => {
+                            const gcImageUrl = await getDownloadURL(snapshot.ref);
+                            const gcData = {
+                                name: gcNameVal,
+                                profilePicture: gcImageUrl,  // Save the profile picture URL
+                                members: gcMembers,
+                                lastMessage: {}
+                            };
+                            const gcId = Date.now().toString(); // Generate a unique ID
+                            set(ref(db, `GroupChats/${gcId}`), gcData);
+                            window.location.href = `groupchat.html?gcId=${gcId}`;
+                        })
+                        .catch(error => {
+                            console.error('Error uploading group chat image:', error);
+                            alert('An error occurred while creating the group chat. Please try again.');
+                        });
+                } else {
+                    alert('Please select a profile picture for the group chat.');
+                }
+            } else {
+                alert('Please select at least 2 users to create a group chat.');
+            }
+        });
+
+    </script>
+</body>
+</html>

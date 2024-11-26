@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Group Chat</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row">
+            <div class="col-md-12">
+                <div class="d-flex align-items-center mb-3">
+                    <img id="chatProfilePicture" src="default-profile-picture.jpg" class="rounded-circle border me-3" style="width: 60px; height: 60px; object-fit: cover;" alt="Group Chat Profile Picture">
+                    <h2 id="chatTitle" style="font-size: 24px;">Loading...</h2>
+                </div>
+
+                <div id="chatMessages" class="mb-4"></div>
+                <input type="text" id="messageInput" class="form-control mb-2" placeholder="Type your message...">
+                <button id="sendBtn" class="btn btn-primary me-2">Send</button>
+                <input type="file" id="imageFileInput" accept="image/*" class="mb-2">
+                <button id="sendImageBtn" class="btn btn-secondary">Send Image</button>
+                <button id="leaveBtn" class="btn btn-danger">Leave Chat</button>
+                <button id="backBtn" class="btn btn-warning">Back</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+        import { getAuth } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-auth.js";
+        import { getDatabase, ref, push, onChildAdded, onValue, set, get, remove } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-database.js";
+        import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-storage.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyB6U1J7tGtITNPDlk9HuMlhhhqLKJ-ttsk",
+            authDomain: "uidchat.firebaseapp.com",
+            databaseURL: "https://uidchat-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "uidchat",
+            storageBucket: "uidchat.appspot.com",
+            messagingSenderId: "283559039789",
+            appId: "1:283559039789:web:c68696743f039b199639a4"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getDatabase();
+        const storage = getStorage(app);
+
+        const chatProfilePicture = document.getElementById('chatProfilePicture');
+        const chatTitle = document.getElementById('chatTitle');
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const imageFileInput = document.getElementById('imageFileInput');
+        const sendImageBtn = document.getElementById('sendImageBtn');
+        const leaveBtn = document.getElementById('leaveBtn');
+        const backBtn = document.getElementById('backBtn');
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const chatId = urlParams.get('gcId');
+
+        async function initChat() {
+            const gcNameRef = ref(db, `GroupChats/${chatId}/name`);
+            onValue(gcNameRef, (snapshot) => {
+                chatTitle.textContent = snapshot.val();
+            });
+
+            const gcProfilePictureRef = ref(db, `GroupChats/${chatId}/profilePicture`);
+            onValue(gcProfilePictureRef, (snapshot) => {
+                chatProfilePicture.src = snapshot.val() || 'default-profile-picture.jpg';
+            });
+
+            const messagesRef = ref(db, `GroupChats/${chatId}/messages`);
+            onChildAdded(messagesRef, (snapshot) => {
+                const message = snapshot.val();
+                displayMessage(message);
+            });
+
+            sendBtn.addEventListener('click', sendMessage);
+            sendImageBtn.addEventListener('click', sendImage);
+            leaveBtn.addEventListener('click', leaveChat);
+            backBtn.addEventListener('click', backToHome);
+        }
+
+        async function fetchUser(userId) {
+            const userRef = ref(db, `UsersAuthList/${userId}`);
+            const snapshot = await get(userRef);
+            return snapshot.val();
+        }
+
+        async function displayMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'mb-2';
+            const sender = await fetchUser(message.sender);
+
+            messageDiv.innerHTML = `
+                <img src="${sender?.profilePicture || 'default-profile-picture.jpg'}" 
+                     class="rounded-circle border" 
+                     style="width: 40px; height: 40px; object-fit: cover; margin-right: 10px;" 
+                     alt="Profile Picture">
+                <strong>${sender?.displayname || 'Unknown User'}: </strong>
+                ${message.content ? message.content : ''}
+                ${message.image ? `<img src="${message.image}" style="max-width: 200px;" alt="Sent Image">` : ''}
+                <span class="text-muted float-end">${new Date(message.timestamp).toLocaleTimeString()}</span>
+            `;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight; // Auto scroll to bottom
+        }
+
+        function sendMessage() {
+            const messageContent = messageInput.value;
+            if (messageContent.trim() !== '') {
+                const message = {
+                    sender: auth.currentUser?.uid,
+                    content: messageContent,
+                    timestamp: Date.now()
+                };
+                push(ref(db, `GroupChats/${chatId}/messages`), message);
+                
+                // Update last message and add chat to users' group chats
+                updateLastMessageAndGroupChats();
+
+                messageInput.value = '';
+            }
+        }
+
+        function sendImage() {
+            const file = imageFileInput.files[0];
+            if (file) {
+                const storageRefUser = storageRef(storage, `chatImages/${chatId}/${file.name}`);
+                
+                uploadBytes(storageRefUser, file)
+                    .then(async (snapshot) => {
+                        const imageUrl = await getDownloadURL(snapshot.ref);
+                        const message = {
+                            sender: auth.currentUser?.uid,
+                            image: imageUrl,
+                            timestamp: Date.now()
+                        };
+                        
+                        push(ref(db, `GroupChats/${chatId}/messages`), message);
+                        
+                        // Update last message and add chat to users' group chats
+                        updateLastMessageAndGroupChats();
+
+                        imageFileInput.value = '';
+                    })
+                    .catch(error => {
+                        console.error('Error uploading image:', error);
+                        alert('An error occurred while sending the image. Please try again.');
+                    });
+            } else {
+                alert('Please select an image to upload.');
+            }
+        }
+
+        function leaveChat() {
+    const userId = auth.currentUser?.uid;
+    if (userId) {
+        const groupChatMembersRef = ref(db, `GroupChats/${chatId}/members/${userId}`);
+        
+        console.log("Removing user from GroupChats:", userId);
+        
+        // Remove user from the members list in GroupChats
+        remove(groupChatMembersRef)
+            .then(() => {
+                console.log("User removed from GroupChats:", userId);
+                
+                // Remove user from the groupchats collection in UsersAuthList
+                const userChatRef = ref(db, `UsersAuthList/${userId}/groupchats/${chatId}`);
+                return remove(userChatRef);
+            })
+            .then(async () => {
+                console.log("User removed from UsersAuthList:", userId);
+
+                // Update the members list in GroupChats
+                const groupChatMembersSnapshot = await get(ref(db, `GroupChats/${chatId}/members`));
+                let groupChatMembers = groupChatMembersSnapshot.val();
+
+                if (groupChatMembers) {
+                    // Find and remove the user ID from the members object
+                    const index = Object.values(groupChatMembers).indexOf(userId);
+                    if (index > -1) {
+                        const keys = Object.keys(groupChatMembers);
+                        delete groupChatMembers[keys[index]];
+                    }
+
+                    await set(ref(db, `GroupChats/${chatId}/members`), groupChatMembers);
+                }
+
+                // Check if the current user is the last member
+                if (!groupChatMembers || Object.keys(groupChatMembers).length === 0) {
+                    // Remove the GroupChat if there are no members left
+                    await remove(ref(db, `GroupChats/${chatId}`));
+                    console.log("GroupChat removed:", chatId);
+                }
+                
+                alert('You have left the chat.');
+                window.location.href = 'home.html';
+            })
+            .catch(error => {
+                console.error('Error leaving chat:', error);
+                alert('An error occurred while leaving the chat. Please try again.');
+            });
+    } else {
+        alert('You are not logged in.');
+    }
+}
+
+
+
+
+
+
+
+        function backToHome() {
+            window.location.href = 'home.html';
+        }
+
+        async function updateLastMessageAndGroupChats() {
+    const messageRef = ref(db, `GroupChats/${chatId}/messages`);
+    const lastMessageRef = ref(db, `GroupChats/${chatId}/lastMessage`);
+    const groupChatMembersRef = ref(db, `GroupChats/${chatId}/members`);
+
+    // Fetch last message
+    const messagesSnapshot = await get(messageRef);
+    const messages = messagesSnapshot.val();
+    const lastMessageKey = Object.keys(messages).pop(); // Get the last message key
+    const lastMessage = messages[lastMessageKey];
+
+    if (lastMessage) {
+        set(lastMessageRef, lastMessage);
+
+        // Fetch group chat members
+        const groupChatMembersSnapshot = await get(groupChatMembersRef);
+        const groupChatMembers = groupChatMembersSnapshot.val();
+
+        // Save member IDs to an array for debugging
+        const memberIds = Object.values(groupChatMembers);
+
+        // Update last message for each member
+        for (const userId of memberIds) {
+            if (userId !== "0" && userId !== "1" && userId !== "2") { // Exclude invalid user IDs
+                const userChatRef = ref(db, `UsersAuthList/${userId}/groupchats/${chatId}`);
+                const userChatSnapshot = await get(userChatRef);
+                if (!userChatSnapshot.val()) {
+                    set(userChatRef, { lastMessage, timestamp: Date.now() });
+                } else if (userChatSnapshot.val().timestamp < lastMessage.timestamp) {
+                    set(userChatRef, { lastMessage, timestamp: Date.now() });
+                }
+            }
+        }
+    }
+}
+
+
+
+        initChat();
+    </script>
+</body>
+</html>
